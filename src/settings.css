@@ -1985,7 +1985,7 @@ html, body {
 }
 .row-desc-toggle {
   position: relative;
-  top: 0.5px;
+  top: 1.5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2001,12 +2001,8 @@ html, body {
   line-height: 0;
   cursor: pointer;
 }
-.agent-detail-group-rows .row-desc-toggle,
-.settings-detail-group-rows .row-desc-toggle,
 .tg-approval-token-stored-label > .row-desc-toggle {
-  top: 0;
-}
-.tg-approval-token-stored-label > .row-desc-toggle {
+  top: 1px;
   margin-left: 0;
 }
 .row-desc-toggle svg {
@@ -5089,7 +5085,7 @@ html, body {
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
-  margin-top: 12px;
+  margin-top: 21px;
   border: 1.5px solid var(--text-tertiary);
   border-radius: 50%;
   color: var(--text-tertiary);
@@ -5103,7 +5099,7 @@ html, body {
   justify-content: center;
 }
 .channel-setup-step:has(> .channel-setup-body > .tg-approval-token-stored-row:first-child) > .channel-setup-num {
-  margin-top: 15px;
+  margin-top: 23px;
 }
 .channel-setup-body {
   flex: 1;

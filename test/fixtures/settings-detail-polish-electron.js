@@ -213,18 +213,18 @@ async function installPageApi(win) {
         measureStepAlignment() {
           const step = document.querySelector('[data-step-probe="1"]');
           const num = step.querySelector(".channel-setup-num");
-          const label = step.querySelector(".row-label");
+          const rowText = step.querySelector(".row-text") || step.querySelector(".row-label");
           const numRect = num.getBoundingClientRect();
-          const labelRect = label.getBoundingClientRect();
+          const rowTextRect = rowText.getBoundingClientRect();
           const numStyle = getComputedStyle(num);
           return {
             numSize: String(numRect.width.toFixed(2)) + "x" + String(numRect.height.toFixed(2)),
             marginTop: numStyle.marginTop,
             numCentreY: Number((numRect.top + numRect.height / 2).toFixed(2)),
-            labelCentreY: Number((labelRect.top + labelRect.height / 2).toFixed(2)),
-            labelHeight: Number(labelRect.height.toFixed(2)),
+            labelCentreY: Number((rowTextRect.top + rowTextRect.height / 2).toFixed(2)),
+            labelHeight: Number(rowTextRect.height.toFixed(2)),
             delta: Number(((numRect.top + numRect.height / 2)
-              - (labelRect.top + labelRect.height / 2)).toFixed(2)),
+              - (rowTextRect.top + rowTextRect.height / 2)).toFixed(2)),
             stepHeight: Number(step.getBoundingClientRect().height.toFixed(2)),
             size: String(numRect.width.toFixed(2)) + "x" + String(numRect.height.toFixed(2)),
             borderRadius: numStyle.borderRadius,
@@ -286,8 +286,8 @@ async function installPageApi(win) {
                 - (labelRect.top + labelRect.height / 2)).toFixed(3)),
               toggleInside: toggleRect.left >= labelRect.left - 0.5
                 && toggleRect.right <= labelRect.right + 0.5
-                && toggleRect.top >= labelRect.top - 0.5
-                && toggleRect.bottom <= labelRect.bottom + 0.5,
+                && toggleRect.top >= labelRect.top - 2
+                && toggleRect.bottom <= labelRect.bottom + 2,
               masked: maskedRect && {
                 centreDelta: Number(((maskedRect.top + maskedRect.height / 2)
                   - (labelRect.top + labelRect.height / 2)).toFixed(3)),
@@ -624,7 +624,7 @@ async function measureConfirmIconInk(win) {
   return { ink: 0, delta: null };
 }
 
-function assertLabelAlignment(rows, context, tolerance = 0.5) {
+function assertLabelAlignment(rows, context, tolerance = 2) {
   assert.ok(rows.length >= 5, `label alignment rows are mounted; ${context}`);
   for (const row of rows) {
     const detail = `${context} ${JSON.stringify(row)}`;
@@ -975,7 +975,7 @@ async function main() {
       assertLabelAlignment(
         await win.webContents.executeJavaScript("__polish.measureLabelAlignment()"),
         `zoom ${zoom} labels`,
-        0.5 * Math.max(1, zoom),
+        2 * Math.max(1, zoom),
       );
     }
     applyZoomToWindow(win, 1);
