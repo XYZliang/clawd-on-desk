@@ -674,6 +674,8 @@
     const rect = anchor.getBoundingClientRect();
     if (!rect || !Number.isFinite(rect.top)) return false;
     const zoom = settingsTextZoom();
+    tooltip.style.left = "0px";
+    tooltip.style.top = "0px";
     const width = (Number(tooltip.offsetWidth) || 0) * zoom;
     const height = (Number(tooltip.offsetHeight) || 0) * zoom;
     const viewport = settingsViewportSize();

@@ -5089,7 +5089,7 @@ html, body {
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
-  margin-top: 13px;
+  margin-top: 12px;
   border: 1.5px solid var(--text-tertiary);
   border-radius: 50%;
   color: var(--text-tertiary);
@@ -5108,6 +5108,9 @@ html, body {
 .channel-setup-body {
   flex: 1;
   min-width: 0;
+}
+.channel-setup-body .row-label {
+  line-height: 18px;
 }
 .channel-setup-foot {
   margin: 0 -12px;
