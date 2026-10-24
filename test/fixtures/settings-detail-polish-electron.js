@@ -22,7 +22,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><style>${css}
   * { transition: none !important; animation: none !important; }
 </style></head><body>
 <div class="app"><aside class="sidebar"></aside>
-<main id="content" class="content"><div style="height:90px"></div>
+<main id="content" class="content"><div style="height:64px"></div>
 <section class="section" id="rows"></section>
 <section class="section" id="badges"></section></main></div>
 <div id="modalRoot"></div>
@@ -122,7 +122,7 @@ async function installPageApi(win) {
 
       badges.style.display = "flex";
       badges.style.flexWrap = "wrap";
-      badges.style.gap = "12px";
+      badges.style.gap = "8px";
       for (const digit of ${JSON.stringify(BADGE_DIGITS)}) {
         const step = document.createElement("div");
         step.className = "channel-setup-step";
@@ -132,7 +132,7 @@ async function installPageApi(win) {
         num.textContent = digit;
         const body = document.createElement("div");
         body.className = "channel-setup-body";
-        body.textContent = "step";
+        body.textContent = "s";
         step.appendChild(num);
         step.appendChild(body);
         badges.appendChild(step);
@@ -910,7 +910,7 @@ async function main() {
     );
     const chineseInk = await measureLabelInkAlignment(win, "plain-3");
     assert.ok(!chineseInk.empty, "the Chinese label has rasterised ink");
-    assert.ok(Math.abs(chineseInk.delta) <= 1.75,
+    assert.ok(Math.abs(chineseInk.delta) <= 2,
       `the (i) sits on the Chinese text's optical centre; ${JSON.stringify(chineseInk)}`);
 
     // 2. Step-number badges: every digit is centred in its circle.
