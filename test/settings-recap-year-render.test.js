@@ -435,6 +435,13 @@ test("a live data refresh on the year view patches only the changed day cell in 
   const initialCard = yearCard(harness);
   const initialCells = harness.content.querySelectorAll(".recap-cell");
   assert.equal(initialCells.length, 372);
+  const activeCell = initialCells.find((node) => node.dataset.cellKey === "2026-08-29");
+  activeCell.dispatchEvent({ type: "mouseenter" });
+  await new Promise((resolve) => setTimeout(resolve, 110));
+  assert.equal(harness.content.querySelectorAll(".recap-cell-popover").length, 1,
+    "hovering the cell opens its preview popover before the live refresh");
+  assert.match(harness.content.querySelector(".recap-cell-popover").textContent, /3 signals.*3 \(100%\)/,
+    "popover initially shows the pre-refresh activity count");
 
   payload = sampleView();
   payload.days[0].rows[0].metrics.activityEvents = 12;
@@ -446,10 +453,14 @@ test("a live data refresh on the year view patches only the changed day cell in 
     "live refresh patches the mounted year card in place without tearing down 372 DOM nodes");
   const afterCells = harness.content.querySelectorAll(".recap-cell");
   assert.deepEqual(afterCells, initialCells, "all 372 cell DOM nodes are preserved");
-  const activeCell = afterCells.find((node) => node.dataset.cellKey === "2026-08-29");
   assert.equal(activeCell.classList.contains("recap-depth-2"), true,
     "the changed day cell updates its depth class in place");
+  assert.equal(activeCell.querySelector(".recap-cell-segments").querySelectorAll("i")[0].style.flex, "12 1 0%",
+    "open preview segments refresh to the updated count");
+  assert.match(harness.content.querySelector(".recap-cell-popover").textContent, /12 signals.*12 \(100%\)/,
+    "open preview popover refreshes immediately to the updated count");
   const rowMetrics = harness.content.querySelector(".recap-agent-row").querySelectorAll("dd");
   assert.deepEqual(rowMetrics.map((dd) => dd.textContent), ["2", "7", "12"],
     "agent row metrics update in place");
+  activeCell.dispatchEvent({ type: "mouseleave" });
 });

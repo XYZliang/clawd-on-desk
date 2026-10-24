@@ -1291,6 +1291,7 @@
           scrollActivity.pendingPeek = { cell, element, rowByKey };
           return;
         }
+        const immediatePopover = this.peekElement === element && Boolean(this.popover);
         this.clearPeek();
         const entries = cell.counts.slice().sort((left, right) => right.count - left.count);
         this.peekElement = element;
@@ -1311,7 +1312,7 @@
           segmentHost.appendChild(segments);
           this.peekSegments = segments;
         }
-        this.peekTimer = setTimeout(() => {
+        const mountPopover = () => {
           this.peekTimer = null;
           if (this.peekElement !== element || !element.parentNode) return;
           const popover = document.createElement("div");
@@ -1362,7 +1363,9 @@
             popover.style.top = `${top}px`;
           }
           popover.classList.add("show");
-        }, 90);
+        };
+        if (immediatePopover) mountPopover();
+        else this.peekTimer = setTimeout(mountPopover, 90);
       },
       selectGridCell(index, announce) {
         if (!this.cellList.length) return;
@@ -1403,6 +1406,7 @@
           : 1;
         const barMaxChanged = view.period === "today" && nextTodayBarMaximum !== this.todayBarMaximum;
         let anyCellChanged = false;
+        let peekCellChanged = false;
         for (let index = 0; index < nextModel.cells.length; index += 1) {
           const nextCell = nextModel.cells[index];
           const slot = this.renderedCells[index];
@@ -1415,6 +1419,7 @@
           const mapEntry = this.cellElements.get(nextCell.key);
           if (mapEntry) mapEntry.cell = nextCell;
           const element = slot.element;
+          if (element === this.peekElement && cellChanged) peekCellChanged = true;
           if (cellChanged) {
             const preserved = [];
             if (element.classList.contains("recap-cell-keyboard")) preserved.push("recap-cell-keyboard");
@@ -1435,7 +1440,26 @@
           this.applyHighlight();
           if (this.peekElement && this.peekElement.dataset && this.peekElement.dataset.cellKey) {
             const peekEntry = this.cellElements.get(this.peekElement.dataset.cellKey);
-            if (peekEntry) this.peekCell = peekEntry.cell;
+            if (peekEntry) {
+              if (peekCellChanged) {
+                this.showPeek(peekEntry.cell, this.peekElement, this.rowByKey);
+                if (!this.highlightedKey && this.live && this.peekElement.classList.contains("recap-cell-keyboard")) {
+                  this.live.textContent = this.peekElement.getAttribute("aria-label") || "";
+                }
+              } else {
+                this.peekCell = peekEntry.cell;
+              }
+            }
+          }
+          if (scrollActivity.pendingPeek && scrollActivity.pendingPeek.element && scrollActivity.pendingPeek.element.dataset) {
+            const pendingEntry = this.cellElements.get(scrollActivity.pendingPeek.element.dataset.cellKey);
+            if (pendingEntry) {
+              scrollActivity.pendingPeek = {
+                cell: pendingEntry.cell,
+                element: scrollActivity.pendingPeek.element,
+                rowByKey: this.rowByKey,
+              };
+            }
           }
         }
         return true;
