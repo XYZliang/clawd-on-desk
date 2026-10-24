@@ -9708,6 +9708,9 @@ describe("settings renderer browser environment", () => {
     assert.ok(toggle);
     assert.equal(toggle.getAttribute("title"), undefined, "native OS tooltip must not be used");
     assert.equal(toggle.getAttribute("aria-describedby"), row.descriptionElement.id);
+    const svg = toggle.querySelector("svg");
+    assert.ok(svg, "the disclosure renders a vector SVG icon");
+    assert.equal(svg.getAttribute("viewBox"), "0 0 14 14");
 
     toggle.dispatchEvent({ type: "mouseenter" });
     const tooltip = document.body.children.find((child) => child.classList.contains("settings-tooltip"));
@@ -9725,7 +9728,7 @@ describe("settings renderer browser environment", () => {
     assert.equal(document.body.children.includes(tooltip), true, "a single tooltip node is reused");
   });
 
-  it("keeps a parenthetical button label group on one line", () => {
+  it("keeps three-action confirmation button labels unsplit on a single line", () => {
     const document = {
       body: new FakeElement("body"),
       createElement: (tagName) => new FakeElement(tagName),
@@ -9735,17 +9738,15 @@ describe("settings renderer browser environment", () => {
     const button = core.helpers.buildButton({ label: "重置令牌并启用（推荐）", size: "large" });
     const label = button.querySelector(".settings-button-label");
     assert.equal(label.textContent, "重置令牌并启用（推荐）");
-    const keep = label.querySelectorAll(".settings-button-label-keep");
-    assert.equal(keep.length, 1);
-    assert.equal(keep[0].textContent, "（推荐）");
-
-    const plain = core.helpers.buildButton({ label: "Install" });
-    assert.equal(plain.querySelector(".settings-button-label").textContent, "Install");
-    assert.equal(plain.querySelectorAll(".settings-button-label-keep").length, 0);
+    assert.equal(label.children.length, 0, "button labels stay a single unsplit text run");
 
     core.helpers.setButtonState(button, { label: "保留令牌并启用" });
     assert.equal(label.textContent, "保留令牌并启用");
-    assert.equal(label.querySelectorAll(".settings-button-label-keep").length, 0);
+    assert.equal(label.children.length, 0);
+
+    const css = fs.readFileSync(SETTINGS_CSS, "utf8");
+    assert.match(css, /\.settings-confirm-actions:has\(>\s*:nth-child\(3\)\)\s*\{[\s\S]*?display:\s*flex;/);
+    assert.match(css, /\.settings-confirm-actions:has\(>\s*:nth-child\(3\)\)\s+\.soft-btn\s*\{[\s\S]*?white-space:\s*nowrap;/);
   });
 
   it("removes the legacy channel markup from source and CSS", () => {

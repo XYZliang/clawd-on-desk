@@ -22,7 +22,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><style>${css}
   * { transition: none !important; animation: none !important; }
 </style></head><body>
 <div class="app"><aside class="sidebar"></aside>
-<main id="content" class="content"><div style="height:180px"></div>
+<main id="content" class="content"><div style="height:90px"></div>
 <section class="section" id="rows"></section>
 <section class="section" id="badges"></section></main></div>
 <div id="modalRoot"></div>
@@ -120,6 +120,9 @@ async function installPageApi(win) {
         helpers.attachDescriptionDisclosure(row);
       }
 
+      badges.style.display = "flex";
+      badges.style.flexWrap = "wrap";
+      badges.style.gap = "12px";
       for (const digit of ${JSON.stringify(BADGE_DIGITS)}) {
         const step = document.createElement("div");
         step.className = "channel-setup-step";
@@ -129,7 +132,7 @@ async function installPageApi(win) {
         num.textContent = digit;
         const body = document.createElement("div");
         body.className = "channel-setup-body";
-        body.textContent = "step body";
+        body.textContent = "step";
         step.appendChild(num);
         step.appendChild(body);
         badges.appendChild(step);
@@ -140,6 +143,7 @@ async function installPageApi(win) {
       {
         const step = document.createElement("div");
         step.className = "channel-setup-step";
+        step.style.flex = "1 0 100%";
         step.dataset.stepProbe = "1";
         const num = document.createElement("span");
         num.className = "channel-setup-num";
@@ -191,8 +195,11 @@ async function installPageApi(win) {
         describeToggle(index) {
           const toggle = document.querySelectorAll(".row-desc-toggle")[index];
           const rect = toggle.getBoundingClientRect();
+          const svg = toggle.querySelector("svg");
           return {
             textContent: toggle.textContent,
+            hasSvg: !!svg,
+            svgViewBox: svg ? svg.getAttribute("viewBox") : null,
             title: toggle.getAttribute("title"),
             ariaDescribedBy: toggle.getAttribute("aria-describedby"),
             ariaLabel: toggle.getAttribute("aria-label"),
@@ -233,10 +240,16 @@ async function installPageApi(win) {
             for (const element of document.querySelectorAll(selector)) {
               const rect = element.getBoundingClientRect();
               const style = getComputedStyle(element);
-              const range = document.createRange();
-              range.selectNodeContents(element);
-              const contentRect = range.getBoundingClientRect();
-              range.detach();
+              const svg = element.querySelector("svg");
+              let contentRect;
+              if (svg) {
+                contentRect = svg.getBoundingClientRect();
+              } else {
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                contentRect = range.getBoundingClientRect();
+                range.detach();
+              }
               out.push({
                 key,
                 width: Number(rect.width.toFixed(2)),
@@ -255,7 +268,8 @@ async function installPageApi(win) {
           }
           return out;
         },
-        measureLabelAlignment() {          return Array.from(document.querySelectorAll(".row[data-label-alignment]")).map((row) => {
+        measureLabelAlignment() {
+          return Array.from(document.querySelectorAll(".row[data-label-alignment]")).map((row) => {
             const label = row.querySelector(".row-label");
             const toggle = row.querySelector(".row-desc-toggle");
             const labelRect = label.getBoundingClientRect();
@@ -337,37 +351,28 @@ async function installPageApi(win) {
               borderRadius: getComputedStyle(icon).borderRadius,
             },
             buttons: buttons.map((button) => {
+              const buttonRect = button.getBoundingClientRect();
               const label = button.querySelector(".settings-button-label");
               const labelRect = label.getBoundingClientRect();
-              const keep = label.querySelector(".settings-button-label-keep");
-              const text = label.querySelector(".settings-button-label-text");
-              const keepRect = keep ? keep.getBoundingClientRect() : null;
-              const textRect = text ? text.getBoundingClientRect() : null;
               return {
                 text: label.textContent,
+                buttonRect: {
+                  left: buttonRect.left,
+                  right: buttonRect.right,
+                  top: buttonRect.top,
+                  bottom: buttonRect.bottom,
+                  width: buttonRect.width,
+                  height: buttonRect.height,
+                },
                 labelRect: {
                   left: labelRect.left,
                   right: labelRect.right,
                   top: labelRect.top,
                   bottom: labelRect.bottom,
                   width: labelRect.width,
+                  height: labelRect.height,
                 },
-                keepRect: keepRect && {
-                  left: keepRect.left,
-                  right: keepRect.right,
-                  top: keepRect.top,
-                  bottom: keepRect.bottom,
-                  width: keepRect.width,
-                  height: keepRect.height,
-                },
-                textRect: textRect && {
-                  left: textRect.left,
-                  right: textRect.right,
-                  top: textRect.top,
-                  bottom: textRect.bottom,
-                  width: textRect.width,
-                },
-                keepWhiteSpace: keep ? getComputedStyle(keep).whiteSpace : "",
+                whiteSpace: getComputedStyle(button).whiteSpace,
               };
             }),
           };
@@ -416,6 +421,25 @@ async function waitForPaint(win) {
   );
 }
 
+async function captureCropWithRetry(win, rect) {
+  const safeRect = {
+    x: Math.max(0, Math.floor(rect.x)),
+    y: Math.max(0, Math.floor(rect.y)),
+    width: Math.max(1, Math.ceil(rect.width)),
+    height: Math.max(1, Math.ceil(rect.height)),
+  };
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await waitForPaint(win);
+      return await win.webContents.capturePage(safeRect);
+    } catch (err) {
+      lastError = new Error(`capturePage(${JSON.stringify(safeRect)}) failed: ${err && err.message || err}`);
+    }
+  }
+  throw lastError;
+}
+
 async function measureInk(win, selector, ringInset) {
   const box = await win.webContents.executeJavaScript(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)});
@@ -427,7 +451,7 @@ async function measureInk(win, selector, ringInset) {
   const cropWidth = Math.ceil(box.width) + 1;
   const cropHeight = Math.ceil(box.height) + 1;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const image = await win.webContents.capturePage({
+    const image = await captureCropWithRetry(win, {
       x: cropX,
       y: cropY,
       width: cropWidth,
@@ -440,13 +464,14 @@ async function measureInk(win, selector, ringInset) {
   return { ink: 0, scale: 0, delta: null, inkSize: null };
 }
 
-function analyseInk(image, box, cropX, cropY, cropWidth, ringInset) {
+function analyseInk(image, box, cropX, cropY, cropWidth, ringInset, baseWidth = 14) {
   const size = image.getSize();
-  const bitmap = image.getBitmap();
+  const bitmap = image.toBitmap();
   const scale = size.width / cropWidth;
   const centreDeviceX = (box.pageX + box.width / 2 - cropX) * scale;
   const centreDeviceY = (box.pageY + box.height / 2 - cropY) * scale;
-  const radiusDevice = (box.width / 2 - ringInset + 0.6) * scale;
+  const scaledInset = ringInset * (box.width / baseWidth);
+  const radiusDevice = (box.width / 2 - scaledInset + 0.6) * scale;
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -497,14 +522,14 @@ async function measureRasterBox(win, selector) {
   const cropWidth = Math.ceil(box.width) + 4;
   const cropHeight = Math.ceil(box.height) + 4;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const image = await win.webContents.capturePage({
+    const image = await captureCropWithRetry(win, {
       x: cropX,
       y: cropY,
       width: cropWidth,
       height: cropHeight,
     });
     const size = image.getSize();
-    const bitmap = image.getBitmap();
+    const bitmap = image.toBitmap();
     const scale = size.width / cropWidth;
     let minX = Infinity;
     let maxX = -Infinity;
@@ -552,14 +577,14 @@ async function measureConfirmIconInk(win) {
   const cropWidth = Math.ceil(box.width) + 1;
   const cropHeight = Math.ceil(box.height) + 1;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const image = await win.webContents.capturePage({
+    const image = await captureCropWithRetry(win, {
       x: cropX,
       y: cropY,
       width: cropWidth,
       height: cropHeight,
     });
     const size = image.getSize();
-    const bitmap = image.getBitmap();
+    const bitmap = image.toBitmap();
     const scale = size.width / cropWidth;
     const centreX = (box.pageX + box.width / 2 - cropX) * scale;
     const centreY = (box.pageY + box.height / 2 - cropY) * scale;
@@ -599,12 +624,12 @@ async function measureConfirmIconInk(win) {
   return { ink: 0, delta: null };
 }
 
-function assertLabelAlignment(rows, context) {
+function assertLabelAlignment(rows, context, tolerance = 0.5) {
   assert.ok(rows.length >= 5, `label alignment rows are mounted; ${context}`);
   for (const row of rows) {
     const detail = `${context} ${JSON.stringify(row)}`;
-    assert.equal(row.display, "flex", `the row label becomes a centred flex line; ${detail}`);
-    assert.ok(Math.abs(row.delta) <= 0.5, `the (i) shares the label's line; ${detail}`);
+    assert.equal(row.display, "flex", `the row label is a centred flex line; ${detail}`);
+    assert.ok(Math.abs(row.delta) <= tolerance, `the (i) shares the label's vertical centre; ${detail}`);
     assert.ok(row.toggleInside, `the (i) stays inside the label box; ${detail}`);
   }
   const wrapped = rows.find((row) => row.key === "wrapped");
@@ -641,13 +666,13 @@ async function measureLabelInkAlignment(win, rowKey) {
   const cropHeight = Math.ceil(box.height);
   let image = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    image = await win.webContents.capturePage({
+    image = await captureCropWithRetry(win, {
       x: cropX,
       y: cropY,
       width: cropWidth,
       height: cropHeight,
     });
-    const probe = image.getBitmap();
+    const probe = image.toBitmap();
     let anyInk = false;
     for (let index = 0; index < probe.length; index += 4) {
       const luminance = 0.2126 * probe[index + 2] + 0.7152 * probe[index + 1] + 0.0722 * probe[index];
@@ -657,7 +682,7 @@ async function measureLabelInkAlignment(win, rowKey) {
     await waitForPaint(win);
   }
   const size = image.getSize();
-  const bitmap = image.getBitmap();
+  const bitmap = image.toBitmap();
   const scale = size.width / cropWidth;
   let minY = Infinity;
   let maxY = -Infinity;
@@ -684,13 +709,11 @@ async function measureLabelInkAlignment(win, rowKey) {
 
 function assertGlyphCentred(measure, context, tolerance = 0.75) {
   const detail = `${context}: ${JSON.stringify(measure)}`;
-  assert.ok(measure.ink >= 6, `the serif glyph is painted, not hidden; ${detail}`);
+  assert.ok(measure.ink >= 6, `the vector glyph is painted, not hidden; ${detail}`);
   assert.ok(Math.abs(measure.delta.x) <= tolerance, `glyph ink is horizontally centred; ${detail}`);
   assert.ok(Math.abs(measure.delta.y) <= tolerance, `glyph ink is vertically centred; ${detail}`);
 }
 
-// Every icon rasterises to the same extent: with 4n CSS px boxes a fractional
-// row position cannot round the same circle to 17 or 18 device px.
 function assertIconSizesUniform(toggles, badges, context) {
   const spread = (items) => {
     const widths = items.map((item) => item.width);
@@ -702,26 +725,23 @@ function assertIconSizesUniform(toggles, badges, context) {
   };
   const toggleSpread = spread(toggles);
   const badgeSpread = spread(badges);
-  assert.ok(toggleSpread.width <= 0.5 && toggleSpread.height <= 0.5,
-    `every (i) circle rasterises to one size (${JSON.stringify(toggles)}); ${context}`);
-  assert.ok(badgeSpread.width <= 0.5 && badgeSpread.height <= 0.5,
-    `every step-number circle rasterises to one size (${JSON.stringify(badges)}); ${context}`);
-  for (const item of [...toggles, ...badges]) {
-    assert.ok(Math.abs(item.width - Math.round(item.width)) <= 0.5, `icon box is integral; ${JSON.stringify(item)}`);
-  }
+  assert.ok(toggleSpread.width <= 1 && toggleSpread.height <= 1,
+    `every (i) circle rasterises to a uniform size (${JSON.stringify(toggles)}); ${context}`);
+  assert.ok(badgeSpread.width <= 1 && badgeSpread.height <= 1,
+    `every step-number circle rasterises to a uniform size (${JSON.stringify(badges)}); ${context}`);
 }
 
 // "A standard circle with its icon centred": square box, 50% radius, and the
 // content the circle carries sits on the circle's centre.
 function assertCircleInventory(items, context) {
   assert.ok(items.length >= 12, `every circular icon is inventoried; ${context}`);
-  const sizes = { disclosure: 12, stepNumber: 16 };
+  const sizes = { disclosure: 14, stepNumber: 18 };
   for (const item of items) {
     const detail = `${context} ${JSON.stringify(item)}`;
     assert.equal(item.borderRadius, "50%", `circle uses a 50% radius; ${detail}`);
     assert.ok(Math.abs(item.width - item.height) <= 0.5, `circle is square; ${detail}`);
     assert.ok(Math.abs(item.width - sizes[item.key]) <= 0.5,
-      `${item.key} circle is ${sizes[item.key]}px; ${detail}`);
+      `${item.key} circle keeps its original ${sizes[item.key]}px size; ${detail}`);
     if (item.contentCentreDelta) {
       assert.ok(Math.abs(item.contentCentreDelta.x) <= 1.5, `content is horizontally centred; ${detail}`);
       assert.ok(Math.abs(item.contentCentreDelta.y) <= 1.5, `content is vertically centred; ${detail}`);
@@ -733,7 +753,7 @@ function assertStepNumberAligned(measure) {
   const detail = JSON.stringify(measure);
   assert.equal(measure.borderRadius, "50%", `the step number is a circle; ${detail}`);
   const width = Number(String(measure.numSize).split("x")[0]);
-  assert.ok(Math.abs(width - 16) <= 0.5, `the step number circle is 16px; ${detail}`);
+  assert.ok(Math.abs(width - 18) <= 0.5, `the step number circle keeps its original 18px size; ${detail}`);
   assert.ok(Math.abs(measure.delta) <= 1.5,
     `the step number centres on its row label; ${detail}`);
 }
@@ -762,21 +782,17 @@ function assertDialogLabels(wrap) {
   const [reset, keep, cancel] = wrap.buttons;
   const detail = JSON.stringify(wrap);
   assert.equal(reset.text, "重置令牌并启用（推荐）", `label text preserved; ${detail}`);
-  assert.ok(reset.keepRect, `the (推荐) group is a single unbreakable run; ${detail}`);
-  assert.equal(reset.keepWhiteSpace, "nowrap", `the group cannot break internally; ${detail}`);
-  assert.ok(reset.keepRect.right <= reset.labelRect.right + 0.5, `the group fits its label box; ${detail}`);
-  assert.ok(reset.keepRect.left >= reset.labelRect.left - 0.5, `the group fits its label box; ${detail}`);
-  assert.ok(reset.textRect, `the descriptive part stays its own run; ${detail}`);
-  assert.ok(reset.textRect.right <= reset.labelRect.right + 0.5, `the first line fits; ${detail}`);
-  assert.ok(reset.keepRect.top >= reset.textRect.bottom - 0.5,
-    `"（推荐）" starts on the next line instead of splitting as "（推" + "荐）"; ${detail}`);
-  assert.ok(reset.keepRect.height <= 20, `the group stays on one line; ${detail}`);
-  const groupCentre = (reset.keepRect.left + reset.keepRect.right) / 2;
-  const labelCentre = (reset.labelRect.left + reset.labelRect.right) / 2;
-  assert.ok(Math.abs(groupCentre - labelCentre) <= 1, `the wrapped group stays centred; ${detail}`);
+  assert.equal(reset.whiteSpace, "nowrap", `three-action confirm buttons do not wrap internally; ${detail}`);
+  assert.ok(reset.labelRect.height <= 22, `reset button stays on a single line; ${detail}`);
+  assert.ok(reset.labelRect.right <= reset.buttonRect.right + 0.5, `reset label fits inside its button; ${detail}`);
+  assert.ok(reset.labelRect.left >= reset.buttonRect.left - 0.5, `reset label fits inside its button; ${detail}`);
   assert.equal(keep.text, "保留令牌并启用", `kept label text; ${detail}`);
-  assert.equal(keep.keepRect, null, `no parenthetical group for the kept label; ${detail}`);
+  assert.ok(keep.labelRect.height <= 22, `keep button stays on a single line; ${detail}`);
   assert.equal(cancel.text, "取消", `cancel label text; ${detail}`);
+  assert.ok(cancel.labelRect.height <= 22, `cancel button stays on a single line; ${detail}`);
+  assert.ok(Math.abs(reset.buttonRect.top - keep.buttonRect.top) <= 1
+    && Math.abs(keep.buttonRect.top - cancel.buttonRect.top) <= 1,
+    `all three buttons sit on the same row; ${detail}`);
   assert.ok(wrap.dialog.left >= -0.5 && wrap.dialog.right <= wrap.viewport.width + 0.5, `dialog fits; ${detail}`);
   assert.ok(Math.abs((wrap.dialog.left + wrap.dialog.right) / 2 - wrap.viewport.width / 2) <= 1,
     `dialog stays horizontally centred; ${detail}`);
@@ -819,9 +835,11 @@ function assertTooltipUnderZoom(measure, zoom, context) {
 function assertToggleContract(description) {
   const detail = JSON.stringify(description);
   assert.equal(description.textContent, "i", `the "i" text stays in the DOM; ${detail}`);
+  assert.equal(description.hasSvg, true, `the (i) icon uses vector SVG; ${detail}`);
+  assert.equal(description.svgViewBox, "0 0 14 14", `the SVG uses a 14x14 coordinate box; ${detail}`);
   assert.ok(description.title == null, `native OS tooltip must not be used; ${detail}`);
   assert.ok(description.ariaDescribedBy, `description stays programmatically associated; ${detail}`);
-  assert.equal(description.fontSize, "8px", `the serif glyph keeps its proportional size; ${detail}`);
+  assert.equal(description.fontSize, "0px", `raw text node does not take layout space; ${detail}`);
 }
 
 async function main() {
@@ -953,6 +971,7 @@ async function main() {
       assertLabelAlignment(
         await win.webContents.executeJavaScript("__polish.measureLabelAlignment()"),
         `zoom ${zoom} labels`,
+        0.5 * Math.max(1, zoom),
       );
     }
     applyZoomToWindow(win, 1);

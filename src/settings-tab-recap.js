@@ -61,8 +61,31 @@
   // of locales a long-lived window can switch through, and the cap keeps a
   // pathological caller from growing it without bound.
   const FORMATTER_CACHE_LIMIT = 64;
+  const FORMATTED_DATE_CACHE_LIMIT = 1024;
   const dateFormatCache = new Map();
   const numberFormatCache = new Map();
+  const formattedDateCache = new Map();
+  const optionKeyCache = new WeakMap();
+
+  const DATE_OPTIONS_TODAY_TITLE = Object.freeze({ year: "numeric", month: "long", day: "numeric", weekday: "short" });
+  const DATE_OPTIONS_WEEK_ENDPOINT = Object.freeze({ month: "short", day: "numeric" });
+  const DATE_OPTIONS_MONTH_TITLE = Object.freeze({ year: "numeric", month: "long" });
+  const DATE_OPTIONS_YEAR_TITLE = Object.freeze({ year: "numeric" });
+  const DATE_OPTIONS_CELL_WHEN = Object.freeze({ month: "short", day: "numeric", weekday: "short" });
+  const DATE_OPTIONS_WEEKDAY_NARROW = Object.freeze({ weekday: "narrow" });
+  const DATE_OPTIONS_MONTH_SHORT = Object.freeze({ month: "short" });
+  const DATE_OPTIONS_SINCE = Object.freeze({ year: "numeric", month: "short", day: "numeric" });
+  const NUMBER_OPTIONS_TWO_DIGIT = Object.freeze({ minimumIntegerDigits: 2, useGrouping: false });
+
+  function optionCacheKey(options) {
+    if (!options || typeof options !== "object") return "";
+    let key = optionKeyCache.get(options);
+    if (key === undefined) {
+      key = JSON.stringify(options);
+      optionKeyCache.set(options, key);
+    }
+    return key;
+  }
 
   function createDateFormat(lang, options) {
     return new Intl.DateTimeFormat(lang, { timeZone: "UTC", ...options });
@@ -74,7 +97,7 @@
 
   function cachedFormatter(cache, options, create) {
     const lang = locale();
-    const key = `${lang}\0${JSON.stringify(options)}`;
+    const key = `${lang}\0${optionCacheKey(options)}`;
     let formatter = cache.get(key);
     if (!formatter) {
       if (cache.size >= FORMATTER_CACHE_LIMIT) cache.clear();
@@ -127,14 +150,22 @@
   }
 
   function formatDate(localDate, options) {
-    const date = parseLocalDate(localDate);
-    return date
+    const raw = String(localDate || "");
+    const lang = locale();
+    const cacheKey = `${lang}\0${raw}\0${optionCacheKey(options)}`;
+    const cached = formattedDateCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const date = parseLocalDate(raw);
+    const formatted = date
       ? cachedFormatter(dateFormatCache, options, createDateFormat).format(date)
-      : String(localDate || "");
+      : raw;
+    if (formattedDateCache.size >= FORMATTED_DATE_CACHE_LIMIT) formattedDateCache.clear();
+    formattedDateCache.set(cacheKey, formatted);
+    return formatted;
   }
 
   function formatHour(hour) {
-    return `${formatNumber(hour, { minimumIntegerDigits: 2, useGrouping: false })}:00`;
+    return `${formatNumber(hour, NUMBER_OPTIONS_TWO_DIGIT)}:00`;
   }
 
   function requestData() {
@@ -201,7 +232,11 @@
         view.status = "ready";
         view.data = result;
         if (coreState.activeTab === "recap") {
-          refreshBody();
+          if (mountedInteraction && mountedInteraction.patchDataInPlace(result)) {
+            syncRecordingDescription();
+          } else {
+            refreshBody();
+          }
         }
       }
     }).catch(() => {
@@ -232,6 +267,7 @@
     scrolling: false,
     timer: null,
     pendingRefresh: false,
+    pendingPeek: null,
   };
 
   function onContentScroll() {
@@ -248,6 +284,11 @@
         view.refreshQueued = true;
         refreshIfNeeded();
       }
+      if (scrollActivity.pendingPeek && mountedInteraction) {
+        const { cell, element, rowByKey } = scrollActivity.pendingPeek;
+        scrollActivity.pendingPeek = null;
+        mountedInteraction.showPeek(cell, element, rowByKey);
+      }
     }, SCROLL_QUIET_MS);
   }
 
@@ -256,6 +297,7 @@
     scrollActivity.timer = null;
     scrollActivity.scrolling = false;
     scrollActivity.pendingRefresh = false;
+    scrollActivity.pendingPeek = null;
     if (scrollActivity.bound && scrollActivity.scroller
       && typeof scrollActivity.scroller.removeEventListener === "function") {
       scrollActivity.scroller.removeEventListener("scroll", onContentScroll);
@@ -383,12 +425,24 @@
     element.style.setProperty("--recap-bar-ratio", String(barRatio(value, maximum)));
   }
 
+  const EMPTY_DAY_METRICS = Object.freeze({
+    coverage: null,
+    coveredTotal: 0,
+    capacities: null,
+    hasShape: false,
+    targets: null,
+    expectedTotal: 0,
+  });
+
   // Everything a cell needs from its local day, derived once per day instead of
   // once per cell. A year grid renders 372 cells, and the old per-cell path
   // allocated a 24-slot coverage array plus a 24-slot capacity array (and a
   // closure) for every one of them. Hour-cell geometries (today/week) keep the
   // per-hour arrays; day-cell geometries (month/year) only need the totals.
   function dayMetrics(data, localDate, day, hourly) {
+    if (!hourly && (!day || !day.coverage || !Array.isArray(day.coverage.coverageMinutes))) {
+      return EMPTY_DAY_METRICS;
+    }
     const hasShape = !!(day && (
       Array.isArray(day.hourCapacities)
       || (day.coverage && Array.isArray(day.coverage.hourCapacities))
@@ -636,6 +690,35 @@
     return formatNumber(value);
   }
 
+  function applyAgentRowMetrics(row, item, metricCountNodes) {
+    const metricEntries = [
+      ["recapMetricTurns", row.turnsCompleted],
+      ["recapMetricTools", row.toolCalls],
+      ["recapMetricSignals", row.activityEvents],
+    ];
+    const metricDescription = metricEntries.map(([labelKey, value]) => {
+      const accessibleValue = value === null
+        ? t("recapMetricUnavailableReason")
+        : metricText(value);
+      return `${t(labelKey)}: ${accessibleValue}`;
+    }).join(". ");
+    item.setAttribute("aria-label", `${replace(t("recapAgentHighlightAria"), {
+      agent: rowDisplayName(row),
+    })}. ${metricDescription}`);
+    for (let index = 0; index < metricEntries.length; index += 1) {
+      const [labelKey, value] = metricEntries[index];
+      const count = metricCountNodes[index];
+      count.textContent = metricText(value);
+      if (value === null) {
+        count.title = t("recapMetricUnavailableReason");
+        count.setAttribute("aria-label", `${t(labelKey)}: ${t("recapMetricUnavailableReason")}`);
+      } else {
+        delete count.title;
+        count.removeAttribute("aria-label");
+      }
+    }
+  }
+
   function buildAgentRows(summary, interaction) {
     const list = document.createElement("div");
     list.className = "recap-agent-list";
@@ -654,20 +737,6 @@
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-pressed", view.lockedRowKey === row.key ? "true" : "false");
-      const metricEntries = [
-        ["recapMetricTurns", row.turnsCompleted],
-        ["recapMetricTools", row.toolCalls],
-        ["recapMetricSignals", row.activityEvents],
-      ];
-      const metricDescription = metricEntries.map(([labelKey, value]) => {
-        const accessibleValue = value === null
-          ? t("recapMetricUnavailableReason")
-          : metricText(value);
-        return `${t(labelKey)}: ${accessibleValue}`;
-      }).join(". ");
-      item.setAttribute("aria-label", `${replace(t("recapAgentHighlightAria"), {
-        agent: rowDisplayName(row),
-      })}. ${metricDescription}`);
       item.style.setProperty("--recap-row-color", agentColorToken(row.agentId));
       const identity = document.createElement("div");
       identity.className = "recap-agent-identity";
@@ -687,20 +756,18 @@
       item.appendChild(identity);
       const metrics = document.createElement("dl");
       metrics.className = "recap-agent-metrics";
-      for (const [labelKey, value] of metricEntries) {
+      const metricCountNodes = [];
+      for (const labelKey of ["recapMetricTurns", "recapMetricTools", "recapMetricSignals"]) {
         const pair = document.createElement("div");
         const label = document.createElement("dt");
         label.textContent = t(labelKey);
         const count = document.createElement("dd");
-        count.textContent = metricText(value);
-        if (value === null) {
-          count.title = t("recapMetricUnavailableReason");
-          count.setAttribute("aria-label", `${t(labelKey)}: ${t("recapMetricUnavailableReason")}`);
-        }
         pair.appendChild(label);
         pair.appendChild(count);
         metrics.appendChild(pair);
+        metricCountNodes.push(count);
       }
+      applyAgentRowMetrics(row, item, metricCountNodes);
       item.appendChild(metrics);
       item.addEventListener("mouseenter", () => interaction.setHover(row.key));
       item.addEventListener("mouseleave", () => interaction.setHover(null));
@@ -715,6 +782,7 @@
         }
       });
       interaction.rowElements.set(row.key, item);
+      interaction.rowMetricNodes.set(row.key, metricCountNodes);
       list.appendChild(item);
     }
     return list;
@@ -722,20 +790,20 @@
 
   function periodTitle(data) {
     if (view.period === "today") {
-      return formatDate(data.anchorDate, { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+      return formatDate(data.anchorDate, DATE_OPTIONS_TODAY_TITLE);
     }
     if (view.period === "week") {
       const end = addLocalDays(data.startDate, 6);
-      return `${formatDate(data.startDate, { month: "short", day: "numeric" })} — ${formatDate(end, { month: "short", day: "numeric" })}`;
+      return `${formatDate(data.startDate, DATE_OPTIONS_WEEK_ENDPOINT)} — ${formatDate(end, DATE_OPTIONS_WEEK_ENDPOINT)}`;
     }
     if (view.period === "month") {
-      return formatDate(`${data.anchorDate.slice(0, 7)}-01`, { year: "numeric", month: "long" });
+      return formatDate(`${data.anchorDate.slice(0, 7)}-01`, DATE_OPTIONS_MONTH_TITLE);
     }
-    return formatDate(`${data.anchorDate.slice(0, 4)}-01-01`, { year: "numeric" });
+    return formatDate(`${data.anchorDate.slice(0, 4)}-01-01`, DATE_OPTIONS_YEAR_TITLE);
   }
 
   function cellWhen(cell) {
-    const date = formatDate(cell.localDate, { month: "short", day: "numeric", weekday: "short" });
+    const date = formatDate(cell.localDate, DATE_OPTIONS_CELL_WHEN);
     return cell.hour === null ? date : `${date} ${formatHour(cell.hour)}`;
   }
 
@@ -782,6 +850,39 @@
       : t(keys[cell.state]);
   }
 
+  function sameCellCounts(left, right) {
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+      if (left[index].rowKey !== right[index].rowKey || left[index].count !== right[index].count) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function sameCellState(left, right) {
+    return left.key === right.key
+      && left.state === right.state
+      && left.total === right.total
+      && left.kind === right.kind
+      && left.dayNumber === right.dayNumber
+      && sameCellCounts(left.counts, right.counts);
+  }
+
+  function cellClassName(cell, anchorDate, extraClasses = []) {
+    const classes = ["recap-cell", `recap-cell-${cell.state}`];
+    if (view.period === "today") classes.push("recap-bar-slot");
+    if (cell.state !== "blank") {
+      if (cell.state === "activity") classes.push(`recap-depth-${depthOf(cell.total)}`);
+      if (cell.kind === "fold") classes.push("recap-cell-fold");
+      if (cell.dayNumber && view.period === "month" && cell.localDate === anchorDate) {
+        classes.push("recap-cell-current");
+      }
+    }
+    for (const extra of extraClasses) classes.push(extra);
+    return classes.join(" ");
+  }
+
   function buildTimeline(data, interaction) {
     const model = buildTimelineModel(data, view.period);
     const rowByKey = interaction.rowByKey;
@@ -811,24 +912,23 @@
     interaction.grid = grid;
     const serial = ++renderSerial;
     const cellElements = [];
+    const renderedCells = [];
     let renderedCellCount = 0;
     const todayBarMaximum = view.period === "today"
       ? Math.max(1, ...model.cells.map((cell) => cell.total))
       : 1;
+    interaction.todayBarMaximum = todayBarMaximum;
 
     function appendCell(cell, parent, rowIndex, columnIndex) {
       const element = document.createElement("div");
       element.id = `recap-cell-${serial}-${renderedCellCount}`;
       renderedCellCount += 1;
-      // Collect classes first and write them once: a year grid used to perform
-      // one class write per conditional class on all 372 cells.
-      const classes = ["recap-cell", `recap-cell-${cell.state}`];
-      if (view.period === "today") classes.push("recap-bar-slot");
       element.dataset.cellKey = cell.key;
       if (cell.state === "blank") {
-        element.className = classes.join(" ");
+        element.className = cellClassName(cell, data.anchorDate);
         element.setAttribute("role", "presentation");
         element.setAttribute("aria-hidden", "true");
+        renderedCells.push({ cell, element, listIndex: -1 });
         parent.appendChild(element);
         return;
       }
@@ -844,11 +944,8 @@
         fill.setAttribute("aria-hidden", "true");
         element.appendChild(fill);
       }
-      if (cell.state === "activity") classes.push(`recap-depth-${depthOf(cell.total)}`);
-      if (cell.kind === "fold") classes.push("recap-cell-fold");
       if (cell.dayNumber && view.period === "month") {
         if (cell.localDate === data.anchorDate) {
-          classes.push("recap-cell-current");
           element.setAttribute("aria-current", "date");
         }
         const dayNumber = document.createElement("span");
@@ -857,15 +954,18 @@
         dayNumber.setAttribute("aria-hidden", "true");
         element.appendChild(dayNumber);
       }
-      element.className = classes.join(" ");
+      element.className = cellClassName(cell, data.anchorDate);
       const cellIndex = cellElements.length;
-      element.addEventListener("mouseenter", () => interaction.showPeek(cell, element, rowByKey));
+      // Share one bound mouseenter/mouseleave function across all 365 cells
+      // instead of allocating 365 closures per year render.
+      element.addEventListener("mouseenter", interaction.handleCellMouseEnter);
       element.addEventListener("mouseleave", interaction.clearPeek);
       // The grid owns one delegated mousedown handler; record the index so the
       // handler is O(1) instead of scanning every rendered cell.
       interaction.cellIndexByElement.set(element, cellIndex);
       interaction.cellElements.set(cell.key, { cell, element });
       cellElements.push({ cell, element, rowIndex, columnIndex });
+      renderedCells.push({ cell, element, listIndex: cellIndex });
       parent.appendChild(element);
     }
 
@@ -880,7 +980,7 @@
       labels.setAttribute("aria-hidden", "true");
       for (let hour = 0; hour < 24; hour += 1) {
         const label = document.createElement("span");
-        label.textContent = hour % 3 === 0 ? formatNumber(hour, { minimumIntegerDigits: 2, useGrouping: false }) : "";
+        label.textContent = hour % 3 === 0 ? formatNumber(hour, NUMBER_OPTIONS_TWO_DIGIT) : "";
         labels.appendChild(label);
       }
       grid.appendChild(labels);
@@ -890,7 +990,7 @@
       hours.setAttribute("aria-hidden", "true");
       for (let hour = 0; hour < 24; hour += 1) {
         const label = document.createElement("span");
-        label.textContent = hour % 6 === 0 ? formatNumber(hour, { minimumIntegerDigits: 2, useGrouping: false }) : "";
+        label.textContent = hour % 6 === 0 ? formatNumber(hour, NUMBER_OPTIONS_TWO_DIGIT) : "";
         hours.appendChild(label);
       }
       grid.appendChild(hours);
@@ -901,7 +1001,7 @@
         const localDate = addLocalDays(model.startDate, dayIndex);
         const label = document.createElement("span");
         label.className = "recap-row-label";
-        label.textContent = formatDate(localDate, { weekday: "narrow" });
+        label.textContent = formatDate(localDate, DATE_OPTIONS_WEEKDAY_NARROW);
         label.setAttribute("aria-hidden", "true");
         row.appendChild(label);
         const band = document.createElement("div");
@@ -918,7 +1018,7 @@
       weekdays.setAttribute("aria-hidden", "true");
       for (let index = 0; index < 7; index += 1) {
         const label = document.createElement("span");
-        label.textContent = formatDate(addLocalDays("2026-08-24", index), { weekday: "narrow" });
+        label.textContent = formatDate(addLocalDays("2026-08-24", index), DATE_OPTIONS_WEEKDAY_NARROW);
         label.setAttribute("aria-hidden", "true");
         weekdays.appendChild(label);
       }
@@ -943,7 +1043,7 @@
         row.setAttribute("role", "row");
         const label = document.createElement("span");
         label.className = "recap-row-label";
-        label.textContent = formatDate(`${data.anchorDate.slice(0, 4)}-${String(monthIndex + 1).padStart(2, "0")}-01`, { month: "short" });
+        label.textContent = formatDate(`${data.anchorDate.slice(0, 4)}-${String(monthIndex + 1).padStart(2, "0")}-01`, DATE_OPTIONS_MONTH_SHORT);
         label.setAttribute("aria-hidden", "true");
         row.appendChild(label);
         const band = document.createElement("div");
@@ -962,6 +1062,7 @@
     live.setAttribute("aria-atomic", "true");
     interaction.live = live;
     interaction.cellList = cellElements;
+    interaction.renderedCells = renderedCells;
     if (view.gridIndex === null) {
       const current = cellElements.findIndex(({ cell }) => cell.localDate === data.anchorDate
         && (cell.hour === null || cell.hour === data.currentLocalHour));
@@ -1047,7 +1148,7 @@
     title.textContent = periodTitle(data);
     const since = document.createElement("p");
     since.textContent = replace(t("recapRecordingSince"), {
-      date: formatDate(data.recordingStartedDate || data.anchorDate, { year: "numeric", month: "short", day: "numeric" }),
+      date: formatDate(data.recordingStartedDate || data.anchorDate, DATE_OPTIONS_SINCE),
     });
     titleWrap.appendChild(title);
     titleWrap.appendChild(since);
@@ -1068,10 +1169,22 @@
     card.appendChild(lede);
 
     const interaction = {
+      card,
+      data,
+      period: view.period,
+      localeKey: locale(),
+      summaryRows: summary.rows,
+      titleNode: title,
+      sinceNode: since,
+      ledeNode: lede,
+      hintNode: hint,
       rowElements: new Map(),
+      rowMetricNodes: new Map(),
       cellElements: new Map(),
       cellIndexByElement: new Map(),
       cellList: [],
+      renderedCells: [],
+      todayBarMaximum: 1,
       rowByKey: new Map(summary.rows.map((row) => [row.key, row])),
       highlightedKey: undefined,
       highlightedCells: [],
@@ -1083,6 +1196,13 @@
       popover: null,
       peekElement: null,
       peekCell: null,
+      peekSegments: null,
+      handleCellMouseEnter: (event) => {
+        const target = event && (event.currentTarget || event.target);
+        const index = interaction.cellIndexByElement.get(target);
+        const entry = index !== undefined ? interaction.cellList[index] : null;
+        if (entry) interaction.showPeek(entry.cell, entry.element, interaction.rowByKey);
+      },
       setHover(key) {
         view.hoverRowKey = key;
         this.applyHighlight();
@@ -1142,10 +1262,12 @@
       clearPeek: () => {
         if (interaction.peekTimer) clearTimeout(interaction.peekTimer);
         interaction.peekTimer = null;
+        if (interaction.peekSegments) {
+          interaction.peekSegments.remove();
+          interaction.peekSegments = null;
+        }
         if (interaction.peekElement) {
           interaction.peekElement.classList.remove("recap-cell-peek");
-          const segments = interaction.peekElement.querySelector(".recap-cell-segments");
-          if (segments) segments.remove();
           if (view.period === "today" && interaction.peekCell) {
             const activeKey = view.hoverRowKey || view.lockedRowKey;
             const match = activeKey
@@ -1158,13 +1280,17 @@
         }
         interaction.peekElement = null;
         interaction.peekCell = null;
+        scrollActivity.pendingPeek = null;
         if (interaction.popover) interaction.popover.remove();
         interaction.popover = null;
       },
       showPeek(cell, element, rowByKey) {
         // Cells stream under a resting pointer while the pane scrolls; building
         // and measuring a popover for every one of them is pure jank.
-        if (scrollActivity.scrolling) return;
+        if (scrollActivity.scrolling) {
+          scrollActivity.pendingPeek = { cell, element, rowByKey };
+          return;
+        }
         this.clearPeek();
         const entries = cell.counts.slice().sort((left, right) => right.count - left.count);
         this.peekElement = element;
@@ -1183,6 +1309,7 @@
           }
           const segmentHost = element.querySelector(".recap-bar-fill") || element;
           segmentHost.appendChild(segments);
+          this.peekSegments = segments;
         }
         this.peekTimer = setTimeout(() => {
           this.peekTimer = null;
@@ -1247,6 +1374,71 @@
         if (this.grid) this.grid.setAttribute("aria-activedescendant", current.id);
         if (announce && this.live) this.live.textContent = current.getAttribute("aria-label") || "";
         if (announce) this.showPeek(this.cellList[view.gridIndex].cell, current, this.rowByKey);
+      },
+      patchDataInPlace(nextData) {
+        if (!mountedBody || mountedBody.inert || !this.card || this.card.parentNode !== mountedBody) return false;
+        if (!this.data || !nextData || this.period !== view.period) return false;
+        if (this.localeKey !== locale()) return false;
+        if (this.data.anchorDate !== nextData.anchorDate || this.data.startDate !== nextData.startDate) return false;
+        const nextSummary = summarize(nextData);
+        if (nextSummary.rows.length === 0 || nextSummary.rows.length !== this.summaryRows.length) return false;
+        for (let index = 0; index < nextSummary.rows.length; index += 1) {
+          if (nextSummary.rows[index].key !== this.summaryRows[index].key) return false;
+        }
+        const nextModel = buildTimelineModel(nextData, view.period);
+        if (nextModel.cells.length !== this.renderedCells.length) return false;
+        this.data = nextData;
+        this.summaryRows = nextSummary.rows;
+        this.rowByKey = new Map(nextSummary.rows.map((row) => [row.key, row]));
+        this.sinceNode.textContent = replace(t("recapRecordingSince"), {
+          date: formatDate(nextData.recordingStartedDate || nextData.anchorDate, DATE_OPTIONS_SINCE),
+        });
+        for (const row of nextSummary.rows) {
+          const item = this.rowElements.get(row.key);
+          const metricCountNodes = this.rowMetricNodes.get(row.key);
+          if (item && metricCountNodes) applyAgentRowMetrics(row, item, metricCountNodes);
+        }
+        const nextTodayBarMaximum = view.period === "today"
+          ? Math.max(1, ...nextModel.cells.map((cell) => cell.total))
+          : 1;
+        const barMaxChanged = view.period === "today" && nextTodayBarMaximum !== this.todayBarMaximum;
+        let anyCellChanged = false;
+        for (let index = 0; index < nextModel.cells.length; index += 1) {
+          const nextCell = nextModel.cells[index];
+          const slot = this.renderedCells[index];
+          const prevCell = slot.cell;
+          const cellChanged = !sameCellState(prevCell, nextCell);
+          if (!cellChanged && !barMaxChanged) continue;
+          anyCellChanged = true;
+          slot.cell = nextCell;
+          if (slot.listIndex >= 0) this.cellList[slot.listIndex].cell = nextCell;
+          const mapEntry = this.cellElements.get(nextCell.key);
+          if (mapEntry) mapEntry.cell = nextCell;
+          const element = slot.element;
+          if (cellChanged) {
+            const preserved = [];
+            if (element.classList.contains("recap-cell-keyboard")) preserved.push("recap-cell-keyboard");
+            if (element.classList.contains("recap-cell-peek")) preserved.push("recap-cell-peek");
+            element.className = cellClassName(nextCell, nextData.anchorDate, preserved);
+            if (nextCell.state !== "blank") {
+              element.setAttribute("aria-label", cellAriaLabel(nextCell, this.rowByKey));
+            }
+          }
+          if (view.period === "today" && nextCell.state !== "blank") {
+            element.dataset.barMaximum = String(nextTodayBarMaximum);
+            setTodayBarLevel(element, nextCell.total);
+          }
+        }
+        this.todayBarMaximum = nextTodayBarMaximum;
+        if (anyCellChanged) {
+          this.highlightedKey = undefined;
+          this.applyHighlight();
+          if (this.peekElement && this.peekElement.dataset && this.peekElement.dataset.cellKey) {
+            const peekEntry = this.cellElements.get(this.peekElement.dataset.cellKey);
+            if (peekEntry) this.peekCell = peekEntry.cell;
+          }
+        }
+        return true;
       },
     };
 
@@ -1402,6 +1594,18 @@
     parent.appendChild(buildRecordingControls());
   }
 
+  function syncRecordingDescription() {
+    // Recording state may change in the returned data without replacing controls.
+    const description = document.getElementById("recap-recording-description");
+    if (description) {
+      const paused = coreState.snapshot?.recapEnabled !== false && view.status === "ready"
+        && view.data?.recordingEnabled === false;
+      description.textContent = t(paused ? "recapRecordingPaused" : "recapRecordingDesc");
+      if (paused) description.setAttribute("role", "status");
+      else description.removeAttribute("role");
+    }
+  }
+
   function refreshBody({ retainContent = false } = {}) {
     if (coreState.activeTab !== "recap" || !mountedHost || !mountedBody) return;
     const pending = view.status === "loading" || view.status === "idle";
@@ -1420,15 +1624,7 @@
       }, 150);
     }
     if (!retain) mountedHost.render(mountedBody, renderDataBody);
-    // Recording state may change in the returned data without replacing controls.
-    const description = document.getElementById("recap-recording-description");
-    if (description) {
-      const paused = coreState.snapshot?.recapEnabled !== false && view.status === "ready"
-        && view.data?.recordingEnabled === false;
-      description.textContent = t(paused ? "recapRecordingPaused" : "recapRecordingDesc");
-      if (paused) description.setAttribute("role", "status");
-      else description.removeAttribute("role");
-    }
+    syncRecordingDescription();
   }
 
   function renderDataBody(parent) {

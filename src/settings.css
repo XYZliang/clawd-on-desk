@@ -716,10 +716,16 @@ html, body {
 /* The year grid keeps 372 animatable cells otherwise, and on the real GPU path
    that makes every scroll burst re-rasterise the grid: measured worst frames of
    130-141ms while scrolling 今年, against 10-15ms in 月 / 周 / 今天 (whose cells
-   are far fewer). The cell transitions only serve hover/selection fades, so the
-   year grid drops them: layout, sizes, radius and dashed state borders stay
-   untouched, and the same measurement then shows 23ms worst with no frame over
-   25ms. */
+   are far fewer). Dropping cell transitions and isolating the static 12x31 grid
+   into its own paint-contained composited layer lets the GPU rasterise the
+   rounded dashed cells once and translate the cached texture during scroll,
+   while keeping .recap-cell-popover outside the grid unclipped. */
+.recap-grid-year {
+  padding: 3px;
+  margin: -3px;
+  contain: layout style paint;
+  transform: translateZ(0);
+}
 .recap-grid-year .recap-cell { transition: none; }
 .recap-cell-peek { z-index: 8; }
 .recap-cell-segments {
@@ -1930,11 +1936,15 @@ html, body {
 }
 .agent-detail-group-label,
 .settings-detail-group-label {
-  padding: 12px 0 0 14px;
+  padding: 15px 0 0 14px;
   color: var(--text-tertiary);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
+}
+.agent-detail-group:has(> .agent-detail-group-rows > .row:first-child .segmented) > .agent-detail-group-label,
+.settings-detail-group:has(> .settings-detail-group-rows > .row:first-child .segmented) > .settings-detail-group-label {
+  padding-top: 17px;
 }
 .settings-detail-group-label {
   padding-right: 14px;
@@ -1966,11 +1976,6 @@ html, body {
 .row-desc-collapsed {
   display: none;
 }
-/* Rows that carry the (i) disclosure centre it against the label's line box,
-   so the icon and the text always share one horizontal line — for 12.5px detail
-   rows and 13px rows alike, across every text zoom and locale. A hand-tuned
-   `vertical-align` cannot: it is one fixed length against a font-relative
-   baseline, and it left the icon ~0.6-1.2px below the text's optical centre. */
 .row-label:has(> .row-desc-toggle) {
   display: flex;
   align-items: center;
@@ -1979,37 +1984,50 @@ html, body {
   flex: 0 0 auto;
 }
 .row-desc-toggle {
+  position: relative;
+  top: 0.5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Sizes are multiples of four on purpose: at 100/125/150/175/200/225/250/300%
-     display scaling, 4n CSS px is a whole number of device pixels, so every icon
-     rasterises to the same extent. A box whose width × scale lands on a half
-     device pixel (e.g. 14px at 125%) rounds to 17 or 18 device px depending on
-     the row's fractional position, which reads as "some circles are bigger". */
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   margin-left: 6px;
-  /* Optical centring only: the serif italic glyph's ink box sits slightly above
-     and left of the circle's centre when its line box is centred mechanically.
-     These asymmetric paddings move the glyph inside the box; the border circle,
-     which is drawn on the 12px border box, stays put. */
-  padding: 1.1px 0 0 0.2px;
-  border: 1px solid var(--text-tertiary);
+  padding: 0;
+  border: 0;
   border-radius: 50%;
   background: transparent;
   color: var(--text-tertiary);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 8px;
-  font-style: italic;
-  font-weight: 400;
-  /* A 10px line box matches the content box, so the glyph's baseline is placed
-     from the box edges instead of from an 8px strut. */
-  line-height: 10px;
+  font-size: 0;
+  line-height: 0;
   cursor: pointer;
 }
+.agent-detail-group-rows .row-desc-toggle,
+.settings-detail-group-rows .row-desc-toggle,
+.tg-approval-token-stored-label > .row-desc-toggle {
+  top: 0;
+}
+.tg-approval-token-stored-label > .row-desc-toggle {
+  margin-left: 0;
+}
+.row-desc-toggle svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.row-desc-toggle circle,
+.row-desc-toggle path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+}
+.row-desc-toggle .row-desc-toggle-dot {
+  fill: currentColor;
+  stroke: none;
+}
 .row-desc-toggle:hover {
-  border-color: var(--accent);
   color: var(--accent);
 }
 .row-desc-toggle:focus-visible {
@@ -2927,12 +2945,6 @@ html, body {
 }
 .settings-button-label {
   min-width: 0;
-  flex-wrap: wrap;
-}
-/* Parenthetical label groups ("（推荐）" / "(recommended)") are moved to the
-   next line as a whole instead of being split between two characters. */
-.settings-button-label-keep {
-  white-space: nowrap;
 }
 .settings-button-compact {
   min-height: 28px;
@@ -3710,6 +3722,14 @@ html, body {
   line-height: 1.3;
   justify-content: center;
   text-align: center;
+}
+.settings-confirm-actions:has(> :nth-child(3)) {
+  display: flex;
+  flex-wrap: wrap;
+}
+.settings-confirm-actions:has(> :nth-child(3)) .soft-btn {
+  flex: 1 0 auto;
+  white-space: nowrap;
 }
 .settings-confirm-actions .soft-btn.settings-confirm-danger {
   color: #ffffff;
@@ -5067,23 +5087,23 @@ html, body {
 }
 .channel-setup-num {
   flex: 0 0 auto;
-  /* Multiple of four for the same device-pixel reason as .row-desc-toggle. */
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   margin-top: 13px;
   border: 1.5px solid var(--text-tertiary);
   border-radius: 50%;
   color: var(--text-tertiary);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 700;
-  /* Same optical-centring idea as .row-desc-toggle: the bold digit's ink sits
-     slightly above the circle centre once the line box is centred, so the
-     padding lowers and nudges it back. */
+  font-variant-numeric: tabular-nums;
   line-height: 1;
-  padding: 0.8px 0 0 0.12px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+.channel-setup-step:has(> .channel-setup-body > .tg-approval-token-stored-row:first-child) > .channel-setup-num {
+  margin-top: 15px;
 }
 .channel-setup-body {
   flex: 1;

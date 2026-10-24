@@ -335,9 +335,14 @@ test("year cells delegate mousedown to the grid instead of subscribing one liste
     assert.equal(cell.eventListeners.mouseleave.length, 1);
   }
 
-  // Event delegation resolves the owning cell from the bubbled event target.
+  // Event delegation resolves the owning cell from the bubbled event target,
+  // and all 365 cells share one mouseenter/mouseleave function reference.
   const gridcells = cells.filter((cell) => cell.getAttribute("role") === "gridcell");
   assert.equal(gridcells.length, 365);
+  assert.equal(new Set(gridcells.map((cell) => cell.eventListeners.mouseenter[0])).size, 1,
+    "all year gridcells share one mouseenter handler instead of 365 closures");
+  assert.equal(new Set(gridcells.map((cell) => cell.eventListeners.mouseleave[0])).size, 1,
+    "all year gridcells share one mouseleave handler instead of 365 closures");
   gridcells[60].dispatchEvent({ type: "mousedown", bubbles: true });
   assert.equal(grid.getAttribute("aria-activedescendant"), gridcells[60].id);
   assert.equal(gridcells[60].classList.contains("recap-cell-keyboard"), true);
@@ -416,8 +421,35 @@ test("cell hover hints are suppressed while the settings pane scrolls", async ()
     "content streaming under the pointer must not build hint overlays");
 
   await new Promise((resolve) => setTimeout(resolve, 320));
-  cell.dispatchEvent({ type: "mouseenter" });
   assert.equal(cell.querySelectorAll(".recap-cell-segments").length, 1,
-    "hints return once the scroll has settled");
+    "a cell hovered when scrolling stops reveals its hint once the scroll settles");
   cell.dispatchEvent({ type: "mouseleave" });
+});
+
+test("a live data refresh on the year view patches only the changed day cell in place", async () => {
+  let payload = sampleView();
+  const harness = mountRecapTab({ queryRecap: async () => payload });
+  await harness.settle();
+  harness.setPeriod("year");
+  await harness.settle();
+  const initialCard = yearCard(harness);
+  const initialCells = harness.content.querySelectorAll(".recap-cell");
+  assert.equal(initialCells.length, 372);
+
+  payload = sampleView();
+  payload.days[0].rows[0].metrics.activityEvents = 12;
+  payload.days[0].rows[0].metrics.toolCalls = 7;
+  harness.core.tabs.recap.applyDataChanged();
+  await harness.settle();
+
+  assert.equal(yearCard(harness), initialCard,
+    "live refresh patches the mounted year card in place without tearing down 372 DOM nodes");
+  const afterCells = harness.content.querySelectorAll(".recap-cell");
+  assert.deepEqual(afterCells, initialCells, "all 372 cell DOM nodes are preserved");
+  const activeCell = afterCells.find((node) => node.dataset.cellKey === "2026-08-29");
+  assert.equal(activeCell.classList.contains("recap-depth-2"), true,
+    "the changed day cell updates its depth class in place");
+  const rowMetrics = harness.content.querySelector(".recap-agent-row").querySelectorAll("dd");
+  assert.deepEqual(rowMetrics.map((dd) => dd.textContent), ["2", "7", "12"],
+    "agent row metrics update in place");
 });

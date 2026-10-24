@@ -500,31 +500,6 @@
     return config.labelKey ? t(String(config.labelKey)) : "";
   }
 
-  // A CJK label may break between any two characters, so a trailing
-  // parenthetical such as "（推荐）" can end up split as "（推" + "荐）" inside a
-  // narrow button. Keep every parenthetical group unbreakable and let the
-  // browser move the whole group to the next line instead.
-  const BUTTON_LABEL_GROUP_PATTERN = /([（(][^（）()]*[）)])/;
-  const BUTTON_LABEL_WHOLE_GROUP_PATTERN = /^[（(][^（）()]*[）)]$/;
-
-  function renderButtonLabel(labelElement, label) {
-    const text = label == null ? "" : String(label);
-    labelElement.textContent = "";
-    if (!BUTTON_LABEL_GROUP_PATTERN.test(text)) {
-      labelElement.textContent = text;
-      return;
-    }
-    for (const part of text.split(BUTTON_LABEL_GROUP_PATTERN)) {
-      if (!part) continue;
-      const segment = document.createElement("span");
-      segment.className = BUTTON_LABEL_WHOLE_GROUP_PATTERN.test(part)
-        ? "settings-button-label-keep"
-        : "settings-button-label-text";
-      segment.textContent = part;
-      labelElement.appendChild(segment);
-    }
-  }
-
   function isDomNode(value) {
     if (!value || typeof value !== "object") return false;
     const NodeCtor = typeof globalThis !== "undefined" ? globalThis.Node : null;
@@ -533,7 +508,7 @@
   }
 
   function applyButtonState(button, buttonState) {
-    renderButtonLabel(buttonState.labelElement, buttonState.label);
+    buttonState.labelElement.textContent = buttonState.label;
     button.disabled = buttonState.disabled || buttonState.pending;
     button.classList.toggle("pending", buttonState.pending);
     button.setAttribute("aria-busy", buttonState.pending ? "true" : "false");
@@ -755,6 +730,32 @@
     positionSettingsTooltip();
   }
 
+  function populateDescriptionDisclosureIcon(toggle) {
+    toggle.textContent = "i";
+    const createSvgElement = typeof document.createElementNS === "function"
+      ? (tagName) => document.createElementNS("http://www.w3.org/2000/svg", tagName)
+      : (tagName) => document.createElement(tagName);
+    const svg = createSvgElement("svg");
+    svg.setAttribute("viewBox", "0 0 14 14");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const ring = createSvgElement("circle");
+    ring.setAttribute("cx", "7");
+    ring.setAttribute("cy", "7");
+    ring.setAttribute("r", "6");
+    const dot = createSvgElement("circle");
+    dot.setAttribute("class", "row-desc-toggle-dot");
+    dot.setAttribute("cx", "7");
+    dot.setAttribute("cy", "4.35");
+    dot.setAttribute("r", "0.85");
+    const stem = createSvgElement("path");
+    stem.setAttribute("d", "M7 6.55v3.3");
+    svg.appendChild(ring);
+    svg.appendChild(dot);
+    svg.appendChild(stem);
+    toggle.appendChild(svg);
+  }
+
   // Folds a row's description behind a small (i) toggle. `includeExtra` also
   // collapses .row-desc-extra notes under the same toggle (off by default, so
   // existing callers keep their always-visible extra line).
@@ -783,7 +784,7 @@
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "row-desc-toggle";
-    toggle.textContent = "i";
+    populateDescriptionDisclosureIcon(toggle);
     toggle.setAttribute("aria-expanded", "false");
     toggle.setAttribute("aria-controls", [desc.id, ...extras.map((extra) => extra.id)].join(" "));
     toggle.setAttribute("aria-label", t("rowDescToggle"));
