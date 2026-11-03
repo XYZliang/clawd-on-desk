@@ -1,10 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg id="stage" xmlns="http://www.w3.org/2000/svg" width="880" height="720" viewBox="-32 -24 88 72" preserveAspectRatio="xMidYMid meet">
-<g id="__cloudling-export-shims" opacity="0" pointer-events="none" style="display:none">
-<g id="scrubber"></g>
-<g id="t-display"></g>
-</g>
-<script type="application/ecmascript"><![CDATA[
+<svg xmlns="http://www.w3.org/2000/svg" id="stage" width="880" height="720" preserveAspectRatio="xMidYMid meet" viewBox="-32 -24 88 72"><script type="application/ecmascript"><![CDATA[
 /* =========================================================================
  * Cloudling 主体几何 (沿用 V2 视觉定稿)
  * ========================================================================= */
@@ -600,5 +594,4 @@ function loop() {
 }
 renderFrame(0);
 requestAnimationFrame(loop);
-]]></script>
-</svg>
+]]></script></svg>
